@@ -50,4 +50,72 @@ def refresh_access_token():
     refresh_token = data.get("refresh_token", refresh_token)
 
     write_token(ACCESS_TOKEN_FILE, access_token)
-    write_token_
+    write_token(REFRESH_TOKEN_FILE, refresh_token)
+
+    print("✅ Token Twitch rafraîchi avec succès.")
+    return access_token, None
+
+
+def get_access_token():
+    """Retourne un token valide, rafraîchit si nécessaire"""
+    token = read_token(ACCESS_TOKEN_FILE)
+    if not token:
+        new_token, err = refresh_access_token()
+        if err:
+            print(err)
+        return new_token
+    return token
+
+
+def get_banned_words():
+    """Récupère les mots bannis via l'API Twitch"""
+    token = get_access_token()
+    if not token:
+        return [], "Token manquant ou invalide."
+
+    url = "https://api.twitch.tv/helix/moderation/blocked_terms"
+    params = {
+        "broadcaster_id": BROADCASTER_ID,
+        "moderator_id": BROADCASTER_ID
+    }
+    headers = {
+        "Client-ID": TWITCH_CLIENT_ID,
+        "Authorization": f"Bearer {token}"
+    }
+
+    resp = requests.get(url, headers=headers, params=params)
+    if resp.status_code == 401:
+        # Token expiré → on tente un refresh
+        print("⚠️ Token expiré, rafraîchissement en cours...")
+        refresh_access_token()
+        return get_banned_words()
+
+    if resp.status_code != 200:
+        return [], f"Erreur API Twitch ({resp.status_code}): {resp.text}"
+
+    data = resp.json()
+    return [term["text"] for term in data.get("data", [])], None
+
+
+@app.route("/")
+def home():
+    return "API Pword avec refresh automatique ✅"
+
+
+@app.route("/mots/count")
+def mots_count():
+    words, err = get_banned_words()
+    if err:
+        return err
+    return str(len(words))
+
+
+@app.route("/refresh")
+def manual_refresh():
+    token, err = refresh_access_token()
+    return err or f"Nouveau token : {token[:10]}..."
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
