@@ -27,11 +27,13 @@ def init_db():
         """)
 init_db()
 
+
 def get_user(username):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.execute("SELECT * FROM users WHERE username=?", (username,))
         row = cur.fetchone()
     return row
+
 
 def save_user(username, broadcaster_id, access_token, refresh_token):
     now = int(time.time())
@@ -40,9 +42,12 @@ def save_user(username, broadcaster_id, access_token, refresh_token):
         INSERT OR REPLACE INTO users (username, broadcaster_id, access_token, refresh_token, last_refresh)
         VALUES (?, ?, ?, ?, ?)
         """, (username, broadcaster_id, access_token, refresh_token, now))
+    print(f"💾 Sauvegarde utilisateur {username} (token mis à jour)")
+
 
 # --- TWITCH API ---
 def refresh_token(username, refresh_token):
+    """Rafraîchit un token Twitch pour un utilisateur donné."""
     url = "https://id.twitch.tv/oauth2/token"
     payload = {
         "grant_type": "refresh_token",
@@ -52,11 +57,32 @@ def refresh_token(username, refresh_token):
     }
     resp = requests.post(url, data=payload)
     if resp.status_code != 200:
-        print("Erreur refresh:", resp.text)
+        print(f"⚠️ Erreur de refresh pour {username}: {resp.text}")
         return None, None
+
     data = resp.json()
-    save_user(username, get_user(username)[1], data["access_token"], data.get("refresh_token", refresh_token))
-    return data["access_token"], data.get("refresh_token", refresh_token)
+    new_access = data["access_token"]
+    new_refresh = data.get("refresh_token", refresh_token)
+    save_user(username, get_user(username)[1], new_access, new_refresh)
+    print(f"✅ Token rafraîchi pour {username}")
+    return new_access, new_refresh
+
+
+def refresh_all_tokens():
+    """Rafraîchit tous les tokens Twitch de la base."""
+    print("🔁 Début du rafraîchissement global des tokens...")
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.execute("SELECT username, refresh_token FROM users")
+        users = cur.fetchall()
+
+    for username, refresh_token_str in users:
+        try:
+            refresh_token(username, refresh_token_str)
+        except Exception as e:
+            print(f"⚠️ Erreur lors du refresh pour {username}: {e}")
+            continue
+    print("✅ Rafraîchissement global terminé.")
+
 
 def get_banned_words(user):
     """Récupère tous les mots bannis via l'API Twitch, avec pagination."""
@@ -83,16 +109,23 @@ def get_banned_words(user):
 
         r = requests.get("https://api.twitch.tv/helix/moderation/blocked_terms", headers=headers, params=params)
 
+        if r.status_code == 401:
+            # token expiré ou invalide → on tente un refresh
+            print(f"⚠️ Token expiré pour {user}, tentative de refresh...")
+            token, _ = refresh_token(user, refresh_token_str)
+            headers["Authorization"] = f"Bearer {token}"
+            continue
+
         if r.status_code != 200:
             return f"Erreur Twitch: {r.status_code} {r.text}", None
 
         data = r.json()
         all_terms.extend(term["text"] for term in data.get("data", []))
-
         cursor = data.get("pagination", {}).get("cursor")
         if not cursor:
             break
 
+    print(f"📦 {len(all_terms)} mots interdits récupérés pour {user}")
     return None, all_terms
 
 
@@ -105,6 +138,7 @@ def index():
     <a href="/login">🔑 Se connecter avec Twitch</a>
     """)
 
+
 @app.route("/login")
 def login():
     scope = "moderator:read:blocked_terms user:read:email"
@@ -116,6 +150,7 @@ def login():
         f"&scope={scope}"
     )
     return redirect(auth_url)
+
 
 @app.route("/callback")
 def callback():
@@ -134,6 +169,9 @@ def callback():
     }
     r = requests.post(token_url, data=data)
     tokens = r.json()
+
+    if "access_token" not in tokens:
+        return f"Erreur lors de l'autorisation Twitch : {tokens}"
 
     access_token = tokens["access_token"]
     refresh_token_str = tokens["refresh_token"]
@@ -158,6 +196,7 @@ def callback():
     <pre>!addcom !motinterdit C’est le ${{customapi.{REDIRECT_URI.replace('/callback','')}/api/{username}/count}}ᵉ mot interdit de la chaîne.</pre>
     """)
 
+
 @app.route("/api/<username>/count")
 def api_count(username):
     user = get_user(username)
@@ -167,6 +206,13 @@ def api_count(username):
     if err:
         return err
     return str(len(words))
+
+
+@app.route("/refresh_all")
+def manual_refresh_all():
+    refresh_all_tokens()
+    return "✅ Tous les tokens ont été rafraîchis avec succès."
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
