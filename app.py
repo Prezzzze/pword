@@ -59,24 +59,42 @@ def refresh_token(username, refresh_token):
     return data["access_token"], data.get("refresh_token", refresh_token)
 
 def get_banned_words(user):
+    """Récupère tous les mots bannis via l'API Twitch, avec pagination."""
     _, _, _, refresh_token_str, _ = get_user(user)
     token, _ = refresh_token(user, refresh_token_str)
     broadcaster_id = get_user(user)[1]
 
-    url = "https://api.twitch.tv/helix/moderation/blocked_terms"
     headers = {
         "Client-ID": CLIENT_ID,
         "Authorization": f"Bearer {token}"
     }
-    params = {
-        "broadcaster_id": broadcaster_id,
-        "moderator_id": broadcaster_id
-    }
-    r = requests.get(url, headers=headers, params=params)
-    if r.status_code != 200:
-        return f"Erreur Twitch: {r.status_code} {r.text}", None
-    data = r.json()
-    return None, [term["text"] for term in data.get("data", [])]
+
+    all_terms = []
+    cursor = None
+
+    while True:
+        params = {
+            "broadcaster_id": broadcaster_id,
+            "moderator_id": broadcaster_id,
+            "first": 100  # max 100 selon Twitch docs
+        }
+        if cursor:
+            params["after"] = cursor
+
+        r = requests.get("https://api.twitch.tv/helix/moderation/blocked_terms", headers=headers, params=params)
+
+        if r.status_code != 200:
+            return f"Erreur Twitch: {r.status_code} {r.text}", None
+
+        data = r.json()
+        all_terms.extend(term["text"] for term in data.get("data", []))
+
+        cursor = data.get("pagination", {}).get("cursor")
+        if not cursor:
+            break
+
+    return None, all_terms
+
 
 # --- ROUTES WEB ---
 @app.route("/")
