@@ -3,6 +3,7 @@ import os
 import sqlite3
 import requests
 import time
+import threading
 
 app = Flask(__name__)
 
@@ -11,23 +12,29 @@ CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("REDIRECT_URI", "https://tonapp.onrender.com/callback")
 
-DB_PATH = "users.db"
+# --- BASE DE DONNÉES ---
+DB_PATH = os.path.join("/tmp", "users.db")
 
-# --- UTILITAIRES BD ---
 def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            broadcaster_id TEXT,
-            access_token TEXT,
-            refresh_token TEXT,
-            last_refresh INTEGER
-        )
-        """)
+    """Initialise la base SQLite dans /tmp si elle n'existe pas"""
+    if not os.path.exists(DB_PATH):
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY,
+                broadcaster_id TEXT,
+                access_token TEXT,
+                refresh_token TEXT,
+                last_refresh INTEGER
+            )
+            """)
+        print("✅ Nouvelle base users.db initialisée dans /tmp")
+    else:
+        print("📂 Base existante trouvée dans /tmp")
 init_db()
 
 
+# --- OUTILS BD ---
 def get_user(username):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.execute("SELECT * FROM users WHERE username=?", (username,))
@@ -46,12 +53,12 @@ def save_user(username, broadcaster_id, access_token, refresh_token):
 
 
 # --- TWITCH API ---
-def refresh_token(username, refresh_token):
+def refresh_token(username, refresh_token_value):
     """Rafraîchit un token Twitch pour un utilisateur donné."""
     url = "https://id.twitch.tv/oauth2/token"
     payload = {
         "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
+        "refresh_token": refresh_token_value,
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET
     }
@@ -62,7 +69,7 @@ def refresh_token(username, refresh_token):
 
     data = resp.json()
     new_access = data["access_token"]
-    new_refresh = data.get("refresh_token", refresh_token)
+    new_refresh = data.get("refresh_token", refresh_token_value)
     save_user(username, get_user(username)[1], new_access, new_refresh)
     print(f"✅ Token rafraîchi pour {username}")
     return new_access, new_refresh
@@ -71,17 +78,21 @@ def refresh_token(username, refresh_token):
 def refresh_all_tokens():
     """Rafraîchit tous les tokens Twitch de la base."""
     print("🔁 Début du rafraîchissement global des tokens...")
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.execute("SELECT username, refresh_token FROM users")
-        users = cur.fetchall()
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.execute("SELECT username, refresh_token FROM users")
+            users = cur.fetchall()
 
-    for username, refresh_token_str in users:
-        try:
-            refresh_token(username, refresh_token_str)
-        except Exception as e:
-            print(f"⚠️ Erreur lors du refresh pour {username}: {e}")
-            continue
-    print("✅ Rafraîchissement global terminé.")
+        for username, refresh_token_str in users:
+            try:
+                refresh_token(username, refresh_token_str)
+            except Exception as e:
+                print(f"⚠️ Erreur lors du refresh pour {username}: {e}")
+                continue
+
+        print("✅ Rafraîchissement global terminé.")
+    except Exception as e:
+        print(f"💥 Échec du refresh global : {e}")
 
 
 def get_banned_words(user):
@@ -129,7 +140,7 @@ def get_banned_words(user):
     return None, all_terms
 
 
-# --- ROUTES WEB ---
+# --- ROUTES FLASK ---
 @app.route("/")
 def index():
     return render_template_string("""
@@ -210,10 +221,12 @@ def api_count(username):
 
 @app.route("/refresh_all")
 def manual_refresh_all():
-    refresh_all_tokens()
-    return "✅ Tous les tokens ont été rafraîchis avec succès."
+    """Déclenche le rafraîchissement global en tâche de fond (sans timeout Render)."""
+    threading.Thread(target=refresh_all_tokens).start()
+    return "🔁 Rafraîchissement global lancé en arrière-plan ✅"
 
 
+# --- MAIN ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
