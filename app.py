@@ -1,120 +1,154 @@
-from flask import Flask
+from flask import Flask, redirect, request, jsonify, render_template_string
 import os
+import sqlite3
 import requests
 import time
 
 app = Flask(__name__)
 
-# Variables d'environnement sur Render
-TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
-TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
-BROADCASTER_ID = os.getenv("BROADCASTER_ID")
+# --- CONFIG TWITCH ---
+CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
+CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
+REDIRECT_URI = os.getenv("REDIRECT_URI", "https://tonapp.onrender.com/callback")
 
-# Ces deux valeurs seront stockées et mises à jour automatiquement
-ACCESS_TOKEN_FILE = "access_token.txt"
-REFRESH_TOKEN_FILE = "refresh_token.txt"
+DB_PATH = "users.db"
 
+# --- UTILITAIRES BD ---
+def init_db():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            broadcaster_id TEXT,
+            access_token TEXT,
+            refresh_token TEXT,
+            last_refresh INTEGER
+        )
+        """)
+init_db()
 
-def read_token(file):
-    if os.path.exists(file):
-        with open(file, "r") as f:
-            return f.read().strip()
-    return None
+def get_user(username):
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.execute("SELECT * FROM users WHERE username=?", (username,))
+        row = cur.fetchone()
+    return row
 
+def save_user(username, broadcaster_id, access_token, refresh_token):
+    now = int(time.time())
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("""
+        INSERT OR REPLACE INTO users (username, broadcaster_id, access_token, refresh_token, last_refresh)
+        VALUES (?, ?, ?, ?, ?)
+        """, (username, broadcaster_id, access_token, refresh_token, now))
 
-def write_token(file, value):
-    with open(file, "w") as f:
-        f.write(value.strip())
-
-
-def refresh_access_token():
-    """Utilise le refresh token pour obtenir un nouveau token d'accès"""
-    refresh_token = read_token(REFRESH_TOKEN_FILE)
-    if not refresh_token:
-        return None, "Aucun refresh token trouvé."
-
+# --- TWITCH API ---
+def refresh_token(username, refresh_token):
     url = "https://id.twitch.tv/oauth2/token"
     payload = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
-        "client_id": TWITCH_CLIENT_ID,
-        "client_secret": TWITCH_CLIENT_SECRET,
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET
     }
-
     resp = requests.post(url, data=payload)
     if resp.status_code != 200:
-        return None, f"Erreur refresh token: {resp.text}"
-
+        print("Erreur refresh:", resp.text)
+        return None, None
     data = resp.json()
-    access_token = data["access_token"]
-    refresh_token = data.get("refresh_token", refresh_token)
+    save_user(username, get_user(username)[1], data["access_token"], data.get("refresh_token", refresh_token))
+    return data["access_token"], data.get("refresh_token", refresh_token)
 
-    write_token(ACCESS_TOKEN_FILE, access_token)
-    write_token(REFRESH_TOKEN_FILE, refresh_token)
-
-    print("✅ Token Twitch rafraîchi avec succès.")
-    return access_token, None
-
-
-def get_access_token():
-    """Retourne un token valide, rafraîchit si nécessaire"""
-    token = read_token(ACCESS_TOKEN_FILE)
-    if not token:
-        new_token, err = refresh_access_token()
-        if err:
-            print(err)
-        return new_token
-    return token
-
-
-def get_banned_words():
-    """Récupère les mots bannis via l'API Twitch"""
-    token = get_access_token()
-    if not token:
-        return [], "Token manquant ou invalide."
+def get_banned_words(user):
+    _, _, _, refresh_token_str, _ = get_user(user)
+    token, _ = refresh_token(user, refresh_token_str)
+    broadcaster_id = get_user(user)[1]
 
     url = "https://api.twitch.tv/helix/moderation/blocked_terms"
-    params = {
-        "broadcaster_id": BROADCASTER_ID,
-        "moderator_id": BROADCASTER_ID
-    }
     headers = {
-        "Client-ID": TWITCH_CLIENT_ID,
+        "Client-ID": CLIENT_ID,
         "Authorization": f"Bearer {token}"
     }
+    params = {
+        "broadcaster_id": broadcaster_id,
+        "moderator_id": broadcaster_id
+    }
+    r = requests.get(url, headers=headers, params=params)
+    if r.status_code != 200:
+        return f"Erreur Twitch: {r.status_code} {r.text}", None
+    data = r.json()
+    return None, [term["text"] for term in data.get("data", [])]
 
-    resp = requests.get(url, headers=headers, params=params)
-    if resp.status_code == 401:
-        # Token expiré → on tente un refresh
-        print("⚠️ Token expiré, rafraîchissement en cours...")
-        refresh_access_token()
-        return get_banned_words()
-
-    if resp.status_code != 200:
-        return [], f"Erreur API Twitch ({resp.status_code}): {resp.text}"
-
-    data = resp.json()
-    return [term["text"] for term in data.get("data", [])], None
-
-
+# --- ROUTES WEB ---
 @app.route("/")
-def home():
-    return "API Pword avec refresh automatique ✅"
+def index():
+    return render_template_string("""
+    <h1>MotInterdit.app</h1>
+    <p>Connecte-toi pour activer ta commande Twitch !</p>
+    <a href="/login">🔑 Se connecter avec Twitch</a>
+    """)
 
+@app.route("/login")
+def login():
+    scope = "moderator:read:blocked_terms user:read:email"
+    auth_url = (
+        f"https://id.twitch.tv/oauth2/authorize"
+        f"?client_id={CLIENT_ID}"
+        f"&redirect_uri={REDIRECT_URI}"
+        f"&response_type=code"
+        f"&scope={scope}"
+    )
+    return redirect(auth_url)
 
-@app.route("/mots/count")
-def mots_count():
-    words, err = get_banned_words()
+@app.route("/callback")
+def callback():
+    code = request.args.get("code")
+    if not code:
+        return "Erreur : aucun code reçu."
+
+    # 1️⃣ Échanger le code contre un token
+    token_url = "https://id.twitch.tv/oauth2/token"
+    data = {
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "code": code,
+        "grant_type": "authorization_code",
+        "redirect_uri": REDIRECT_URI
+    }
+    r = requests.post(token_url, data=data)
+    tokens = r.json()
+
+    access_token = tokens["access_token"]
+    refresh_token_str = tokens["refresh_token"]
+
+    # 2️⃣ Récupérer les infos utilisateur
+    headers = {
+        "Client-ID": CLIENT_ID,
+        "Authorization": f"Bearer {access_token}"
+    }
+    user_info = requests.get("https://api.twitch.tv/helix/users", headers=headers).json()
+    user = user_info["data"][0]
+    username = user["login"]
+    broadcaster_id = user["id"]
+
+    # 3️⃣ Sauvegarder
+    save_user(username, broadcaster_id, access_token, refresh_token_str)
+
+    return render_template_string(f"""
+    <h1>Bienvenue {username} 👋</h1>
+    <p>Ton compte est maintenant connecté !</p>
+    <p>Colle cette commande dans StreamElements :</p>
+    <pre>!addcom !motinterdit C’est le ${{customapi.{REDIRECT_URI.replace('/callback','')}/api/{username}/count}}ᵉ mot interdit de la chaîne.</pre>
+    """)
+
+@app.route("/api/<username>/count")
+def api_count(username):
+    user = get_user(username)
+    if not user:
+        return f"Utilisateur {username} non enregistré. Va sur /login pour te connecter."
+    err, words = get_banned_words(username)
     if err:
         return err
     return str(len(words))
-
-
-@app.route("/refresh")
-def manual_refresh():
-    token, err = refresh_access_token()
-    return err or f"Nouveau token : {token[:10]}..."
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
