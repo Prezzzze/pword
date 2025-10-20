@@ -208,7 +208,7 @@ def api_count(username):
 
 @app.route("/refresh_all")
 def manual_refresh_all():
-    """Déclenche le rafraîchissement global en tâche de fond (cron ultra-silencieux)."""
+    """Déclenche le rafraîchissement global en tâche de fond (cron-safe + debug logs)."""
     def background_job():
         try:
             refresh_all_tokens()
@@ -216,8 +216,25 @@ def manual_refresh_all():
             sys.stdout.write(f"💥 Erreur lors du refresh_all: {e}\n")
 
     threading.Thread(target=background_job, daemon=True).start()
-    # Réponse 100 % minimale sans aucun contenu HTML ni entête superflu
-    return Response("OK", status=200, mimetype="text/plain")
+
+    # --- LOG DEBUG DE LA RÉPONSE ---
+    response_body = "OK"
+    size_bytes = len(response_body.encode("utf-8"))
+    sys.stdout.write(f"📤 Réponse HTTP envoyée à cron-job.org : '{response_body}' ({size_bytes} octets)\n")
+
+    # Réponse minimale et sûre
+    return Response(response_body, status=200, mimetype="text/plain")
+
+# --- MIDDLEWARE GLOBAL DE LOG DE RÉPONSES ---
+@app.after_request
+def log_response_info(response):
+    try:
+        body_preview = response.get_data(as_text=True)[:200]
+        size = len(response.get_data())
+        sys.stdout.write(f"📡 Réponse générée → {response.status} | {size} octets | Contenu: {body_preview}\n")
+    except Exception as e:
+        sys.stdout.write(f"⚠️ Impossible de logger la réponse : {e}\n")
+    return response
 
 # --- MAIN ---
 if __name__ == "__main__":
