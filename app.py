@@ -1,9 +1,10 @@
-from flask import Flask, redirect, request, render_template_string
+from flask import Flask, redirect, request, render_template_string, Response
 import os
 import sqlite3
 import requests
 import time
 import threading
+import sys
 
 app = Flask(__name__)
 
@@ -31,7 +32,6 @@ def init_db():
         print("✅ Nouvelle base users.db initialisée dans /tmp")
     else:
         print("📂 Base existante trouvée dans /tmp")
-
 init_db()
 
 # --- OUTILS BD ---
@@ -47,7 +47,7 @@ def save_user(username, broadcaster_id, access_token, refresh_token):
         INSERT OR REPLACE INTO users (username, broadcaster_id, access_token, refresh_token, last_refresh)
         VALUES (?, ?, ?, ?, ?)
         """, (username, broadcaster_id, access_token, refresh_token, now))
-    print(f"💾 Sauvegarde utilisateur {username} (token mis à jour)")
+    sys.stdout.write(f"💾 Sauvegarde utilisateur {username} (token mis à jour)\n")
 
 # --- TWITCH API ---
 def refresh_token(username, refresh_token_value):
@@ -61,19 +61,19 @@ def refresh_token(username, refresh_token_value):
     }
     resp = requests.post(url, data=payload)
     if resp.status_code != 200:
-        print(f"⚠️ Erreur de refresh pour {username}: {resp.text}")
+        sys.stdout.write(f"⚠️ Erreur de refresh pour {username}: {resp.text}\n")
         return None, None
 
     data = resp.json()
     new_access = data["access_token"]
     new_refresh = data.get("refresh_token", refresh_token_value)
     save_user(username, get_user(username)[1], new_access, new_refresh)
-    print(f"✅ Token rafraîchi pour {username}")
+    sys.stdout.write(f"✅ Token rafraîchi pour {username}\n")
     return new_access, new_refresh
 
 def refresh_all_tokens():
-    """Rafraîchit tous les tokens Twitch de la base (logs uniquement côté serveur)."""
-    print("🔁 Début du rafraîchissement global des tokens...")
+    """Rafraîchit tous les tokens Twitch de la base (silencieux côté HTTP)."""
+    sys.stdout.write("🔁 Début du rafraîchissement global des tokens...\n")
     try:
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.execute("SELECT username, refresh_token FROM users")
@@ -83,12 +83,12 @@ def refresh_all_tokens():
             try:
                 refresh_token(username, refresh_token_str)
             except Exception as e:
-                print(f"⚠️ Refresh échoué pour {username}: {e}")
+                sys.stdout.write(f"⚠️ Refresh échoué pour {username}: {e}\n")
                 continue
 
-        print(f"✅ Rafraîchissement global terminé ({len(users)} comptes).")
+        sys.stdout.write(f"✅ Rafraîchissement global terminé ({len(users)} comptes).\n")
     except Exception as e:
-        print(f"💥 Erreur globale lors du refresh_all: {e}")
+        sys.stdout.write(f"💥 Erreur globale lors du refresh_all: {e}\n")
 
 def get_banned_words(user):
     """Récupère tous les mots bannis via l'API Twitch, avec pagination."""
@@ -117,8 +117,7 @@ def get_banned_words(user):
                          headers=headers, params=params)
 
         if r.status_code == 401:
-            # token expiré ou invalide → on tente un refresh
-            print(f"⚠️ Token expiré pour {user}, tentative de refresh...")
+            sys.stdout.write(f"⚠️ Token expiré pour {user}, tentative de refresh...\n")
             token, _ = refresh_token(user, refresh_token_str)
             headers["Authorization"] = f"Bearer {token}"
             continue
@@ -132,7 +131,7 @@ def get_banned_words(user):
         if not cursor:
             break
 
-    print(f"📦 {len(all_terms)} mots interdits récupérés pour {user}")
+    sys.stdout.write(f"📦 {len(all_terms)} mots interdits récupérés pour {user}\n")
     return None, all_terms
 
 # --- ROUTES FLASK ---
@@ -162,7 +161,6 @@ def callback():
     if not code:
         return "Erreur : aucun code reçu."
 
-    # 1️⃣ Échanger le code contre un token
     token_url = "https://id.twitch.tv/oauth2/token"
     data = {
         "client_id": CLIENT_ID,
@@ -180,7 +178,6 @@ def callback():
     access_token = tokens["access_token"]
     refresh_token_str = tokens["refresh_token"]
 
-    # 2️⃣ Récupérer les infos utilisateur
     headers = {
         "Client-ID": CLIENT_ID,
         "Authorization": f"Bearer {access_token}"
@@ -190,7 +187,6 @@ def callback():
     username = user["login"]
     broadcaster_id = user["id"]
 
-    # 3️⃣ Sauvegarder
     save_user(username, broadcaster_id, access_token, refresh_token_str)
 
     return render_template_string(f"""
@@ -212,16 +208,16 @@ def api_count(username):
 
 @app.route("/refresh_all")
 def manual_refresh_all():
-    """Déclenche le rafraîchissement global en tâche de fond (cron-safe)."""
+    """Déclenche le rafraîchissement global en tâche de fond (cron ultra-silencieux)."""
     def background_job():
         try:
             refresh_all_tokens()
         except Exception as e:
-            print(f"💥 Erreur lors du refresh_all: {e}")
+            sys.stdout.write(f"💥 Erreur lors du refresh_all: {e}\n")
 
-    # Lancer le job sans bloquer Render, réponse minimale
     threading.Thread(target=background_job, daemon=True).start()
-    return "OK", 200
+    # Réponse 100 % minimale sans aucun contenu HTML ni entête superflu
+    return Response("OK", status=200, mimetype="text/plain")
 
 # --- MAIN ---
 if __name__ == "__main__":
