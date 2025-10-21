@@ -12,10 +12,10 @@ app = Flask(__name__)
 # --- CONFIG TWITCH ---
 CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
-REDIRECT_URI = os.getenv("REDIRECT_URI", "https://tonapp.onrender.com/callback")
+REDIRECT_URI = os.environ["REDIRECT_URI"]
 
 # --- CONFIG SUPABASE ---
-DB_URL = os.getenv("DATABASE_URL")  # ex: postgresql://postgres:pwd@db.xxx.supabase.co:5432/postgres
+DB_URL = os.getenv("DATABASE_URL")
 
 def get_conn():
     return psycopg2.connect(DB_URL, cursor_factory=RealDictCursor)
