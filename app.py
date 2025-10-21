@@ -1,10 +1,11 @@
 from flask import Flask, redirect, request, render_template_string, Response
 import os
-import sqlite3
 import requests
 import time
-import threading
 import sys
+import subprocess
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 
@@ -13,41 +14,74 @@ CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("REDIRECT_URI", "https://tonapp.onrender.com/callback")
 
-# --- BASE DE DONNÉES ---
-DB_PATH = os.path.join("/tmp", "users.db")
+# --- CONFIG SUPABASE ---
+DB_URL = os.getenv("DATABASE_URL")  # ex: postgresql://postgres:pwd@db.xxx.supabase.co:5432/postgres
 
+def get_conn():
+    return psycopg2.connect(DB_URL, cursor_factory=RealDictCursor)
+
+# --- INIT DB ---
 def init_db():
-    """Initialise la base SQLite dans /tmp si elle n'existe pas."""
-    if not os.path.exists(DB_PATH):
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                username TEXT PRIMARY KEY,
-                broadcaster_id TEXT,
-                access_token TEXT,
-                refresh_token TEXT,
-                last_refresh INTEGER
-            )
-            """)
-        print("✅ Nouvelle base users.db initialisée dans /tmp")
-    else:
-        print("📂 Base existante trouvée dans /tmp")
+    """Crée la table users si elle n'existe pas."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    broadcaster_id TEXT,
+                    access_token TEXT,
+                    refresh_token TEXT,
+                    last_refresh BIGINT
+                )
+                """)
+            conn.commit()
+        print("✅ Base Supabase initialisée.")
+    except Exception as e:
+        print(f"💥 Erreur init_db: {e}")
+
 init_db()
 
-# --- OUTILS BD ---
+# --- UTILITAIRES BD ---
 def get_user(username):
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.execute("SELECT * FROM users WHERE username=?", (username,))
-        return cur.fetchone()
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+                return cur.fetchone()
+    except Exception as e:
+        print(f"⚠️ get_user({username}) échoué : {e}")
+        return None
 
 def save_user(username, broadcaster_id, access_token, refresh_token):
     now = int(time.time())
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("""
-        INSERT OR REPLACE INTO users (username, broadcaster_id, access_token, refresh_token, last_refresh)
-        VALUES (?, ?, ?, ?, ?)
-        """, (username, broadcaster_id, access_token, refresh_token, now))
-    sys.stdout.write(f"💾 Sauvegarde utilisateur {username} (token mis à jour)\n")
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO users (username, broadcaster_id, access_token, refresh_token, last_refresh)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (username)
+                    DO UPDATE SET
+                        broadcaster_id = EXCLUDED.broadcaster_id,
+                        access_token = EXCLUDED.access_token,
+                        refresh_token = EXCLUDED.refresh_token,
+                        last_refresh = EXCLUDED.last_refresh
+                """, (username, broadcaster_id, access_token, refresh_token, now))
+            conn.commit()
+        print(f"💾 Utilisateur {username} enregistré / mis à jour dans Supabase.")
+    except Exception as e:
+        print(f"💥 Erreur save_user: {e}")
+
+def get_all_users():
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT username, refresh_token FROM users")
+                return cur.fetchall()
+    except Exception as e:
+        print(f"⚠️ get_all_users échoué : {e}")
+        return []
 
 # --- TWITCH API ---
 def refresh_token(username, refresh_token_value):
@@ -61,40 +95,44 @@ def refresh_token(username, refresh_token_value):
     }
     resp = requests.post(url, data=payload)
     if resp.status_code != 200:
-        sys.stdout.write(f"⚠️ Erreur de refresh pour {username}: {resp.text}\n")
+        print(f"⚠️ Erreur de refresh pour {username}: {resp.text}")
         return None, None
 
     data = resp.json()
     new_access = data["access_token"]
     new_refresh = data.get("refresh_token", refresh_token_value)
-    save_user(username, get_user(username)[1], new_access, new_refresh)
-    sys.stdout.write(f"✅ Token rafraîchi pour {username}\n")
+    user = get_user(username)
+    if user:
+        save_user(username, user["broadcaster_id"], new_access, new_refresh)
+    print(f"✅ Token rafraîchi pour {username}")
     return new_access, new_refresh
 
 def refresh_all_tokens():
-    """Rafraîchit tous les tokens Twitch de la base (silencieux côté HTTP)."""
-    sys.stdout.write("🔁 Début du rafraîchissement global des tokens...\n")
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            cur = conn.execute("SELECT username, refresh_token FROM users")
-            users = cur.fetchall()
+    """Rafraîchit tous les tokens Twitch de la base."""
+    print("🔁 Début du rafraîchissement global des tokens...")
+    users = get_all_users()
+    total = 0
 
-        for username, refresh_token_str in users:
-            try:
-                refresh_token(username, refresh_token_str)
-            except Exception as e:
-                sys.stdout.write(f"⚠️ Refresh échoué pour {username}: {e}\n")
-                continue
+    for u in users:
+        username = u["username"]
+        refresh_token_str = u["refresh_token"]
+        try:
+            refresh_token(username, refresh_token_str)
+            total += 1
+        except Exception as e:
+            print(f"⚠️ Refresh échoué pour {username}: {e}")
 
-        sys.stdout.write(f"✅ Rafraîchissement global terminé ({len(users)} comptes).\n")
-    except Exception as e:
-        sys.stdout.write(f"💥 Erreur globale lors du refresh_all: {e}\n")
+    print(f"✅ Rafraîchissement global terminé ({total} comptes).")
 
 def get_banned_words(user):
     """Récupère tous les mots bannis via l'API Twitch, avec pagination."""
-    _, _, _, refresh_token_str, _ = get_user(user)
+    user_row = get_user(user)
+    if not user_row:
+        return "Utilisateur non trouvé.", None
+
+    _, _, _, refresh_token_str, _ = user_row.values()
     token, _ = refresh_token(user, refresh_token_str)
-    broadcaster_id = get_user(user)[1]
+    broadcaster_id = user_row["broadcaster_id"]
 
     headers = {
         "Client-ID": CLIENT_ID,
@@ -117,7 +155,7 @@ def get_banned_words(user):
                          headers=headers, params=params)
 
         if r.status_code == 401:
-            sys.stdout.write(f"⚠️ Token expiré pour {user}, tentative de refresh...\n")
+            print(f"⚠️ Token expiré pour {user}, tentative de refresh...")
             token, _ = refresh_token(user, refresh_token_str)
             headers["Authorization"] = f"Bearer {token}"
             continue
@@ -131,7 +169,7 @@ def get_banned_words(user):
         if not cursor:
             break
 
-    sys.stdout.write(f"📦 {len(all_terms)} mots interdits récupérés pour {user}\n")
+    print(f"📦 {len(all_terms)} mots interdits récupérés pour {user}")
     return None, all_terms
 
 # --- ROUTES FLASK ---
@@ -208,33 +246,19 @@ def api_count(username):
 
 @app.route("/refresh_all")
 def manual_refresh_all():
-    """Déclenche le rafraîchissement global en tâche de fond (cron-safe + debug logs)."""
-    def background_job():
-        try:
-            refresh_all_tokens()
-        except Exception as e:
-            sys.stdout.write(f"💥 Erreur lors du refresh_all: {e}\n")
-
-    threading.Thread(target=background_job, daemon=True).start()
-
-    # --- LOG DEBUG DE LA RÉPONSE ---
-    response_body = "OK"
-    size_bytes = len(response_body.encode("utf-8"))
-    sys.stdout.write(f"📤 Réponse HTTP envoyée à cron-job.org : '{response_body}' ({size_bytes} octets)\n")
-
-    # Réponse minimale et sûre
-    return Response(response_body, status=200, mimetype="text/plain")
-
-# --- MIDDLEWARE GLOBAL DE LOG DE RÉPONSES ---
-@app.after_request
-def log_response_info(response):
+    """Lance le refresh global en subprocess pour éviter tout redémarrage Render."""
     try:
-        body_preview = response.get_data(as_text=True)[:200]
-        size = len(response.get_data())
-        sys.stdout.write(f"📡 Réponse générée → {response.status} | {size} octets | Contenu: {body_preview}\n")
+        subprocess.Popen(
+            ["python3", "-c", "import app; app.refresh_all_tokens()"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        sys.stdout.write("🚀 Refresh global lancé en sous-processus.\n")
     except Exception as e:
-        sys.stdout.write(f"⚠️ Impossible de logger la réponse : {e}\n")
-    return response
+        sys.stdout.write(f"💥 Erreur lancement subprocess: {e}\n")
+        return Response("ERROR", status=500, mimetype="text/plain")
+
+    return Response("OK", status=200, mimetype="text/plain")
 
 # --- MAIN ---
 if __name__ == "__main__":
