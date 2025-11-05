@@ -215,7 +215,9 @@ def callback():
     <pre>!addcom !motinterdit C’est le ${{ '{{' }}customapi.{REDIRECT_URI.replace('/callback','')}/api/{username}/count{{ '}}' }}ᵉ mot interdit de la chaîne.</pre>
     <p><strong>URL Overlay OBS :</strong></p>
     <pre>https://{request.host}/overlay?key={overlay_key}</pre>
-    <p>(Ajoute cette URL comme source navigateur dans OBS)</p>
+    <p><strong>URL Overlay OBS "Star Wars crawler" :</strong></p>
+    <pre>https://{request.host}/overlay?key={overlay_key}&style=starwars</pre>
+    <p>(Ajoute l'une de ces URLs comme source navigateur dans OBS)</p>
     """)
 
 @app.route("/api/<username>/count")
@@ -248,63 +250,56 @@ def overlay():
 
     # --- STYLE STAR WARS ---
     if style.lower() == "starwars":
-        html = f"""
-        <html>
-        <head>
-        <meta charset="utf-8">
-        <title>StarWars Crawl</title>
-        <style>
+    joined_words = "\n".join(words)
+    html = f"""
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>StarWars Crawl</title>
+      <style>
         body {{
             margin: 0;
-            overflow: hidden;
             height: 100vh;
+            overflow: hidden;
             background: black;
             color: #ffe81f;
-            font-family: 'Lucida Sans', sans-serif;
-            perspective: 400px;
+            font-family: 'Arial Black', sans-serif;
+            perspective: 600px;
+            perspective-origin: 50% 100%;
         }}
         .crawl {{
             position: absolute;
-            bottom: -100px;
-            width: 80%;
-            left: 10%;
-            font-size: 1.5em;
+            bottom: 0;
+            width: 90%;
+            left: 5%;
             text-align: justify;
+            font-size: 1.5em;
+            line-height: 1.5em;
             transform-origin: 50% 100%;
             animation: crawl 120s linear infinite;
         }}
-        @keyframes crawl {{
-            0%   {{ transform: rotateX(20deg) translateZ(0) translateY(100vh); }}
-            100% {{ transform: rotateX(25deg) translateZ(-600px) translateY(-350%); }}
+        pre {{
+            white-space: pre-wrap;
         }}
-        </style>
-        </head>
-        <body>
-            <div class="crawl">
-                <pre>{joined_words}</pre>
-            </div>
-        </body>
-        </html>
-        """
-        return Response(html, mimetype="text/html")
-
-    # --- STYLE PAR DÉFAUT ---
-    html = f"""
-    <html>
-    <body style='background:transparent;color:yellow;font-family:monospace;'>
-      <div style='animation:scrollUp 60s linear infinite;height:100vh;overflow:hidden;'>
-        <pre>{joined_words}</pre>
-      </div>
-      <style>
-        @keyframes scrollUp {{
-          0% {{transform:translateY(100%);}}
-          100% {{transform:translateY(-100%);}}
+        @keyframes crawl {{
+            0% {{
+                transform: rotateX(25deg) translateZ(0) translateY(100vh);
+            }}
+            100% {{
+                transform: rotateX(25deg) translateZ(-800px) translateY(-350%);
+            }}
         }}
       </style>
+    </head>
+    <body>
+      <div class="crawl">
+        <pre>{joined_words}</pre>
+      </div>
     </body>
     </html>
     """
     return Response(html, mimetype="text/html")
+
 
 
 @app.route("/refresh_all")
