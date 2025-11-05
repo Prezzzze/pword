@@ -2,8 +2,7 @@ from flask import Flask, redirect, request, render_template_string, Response
 import os
 import requests
 import time
-import sys
-import subprocess
+import uuid
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
@@ -13,16 +12,14 @@ app = Flask(__name__)
 CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
 REDIRECT_URI = os.environ["REDIRECT_URI"]
-
-# --- CONFIG SUPABASE ---
-DB_URL = os.getenv("DATABASE_URL")
+DB_URL = os.environ["DATABASE_URL"]
 
 def get_conn():
     return psycopg2.connect(DB_URL, cursor_factory=RealDictCursor)
 
 # --- INIT DB ---
 def init_db():
-    """Crée la table users si elle n'existe pas."""
+    """Crée les tables nécessaires dans Supabase si elles n'existent pas."""
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -32,11 +29,20 @@ def init_db():
                     broadcaster_id TEXT,
                     access_token TEXT,
                     refresh_token TEXT,
+                    overlay_key TEXT,
                     last_refresh BIGINT
                 )
                 """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS banned_words (
+                    id SERIAL PRIMARY KEY,
+                    username TEXT,
+                    word TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+                """)
             conn.commit()
-        print("✅ Base Supabase initialisée.")
+        print("✅ Tables 'users' et 'banned_words' initialisées.")
     except Exception as e:
         print(f"💥 Erreur init_db: {e}")
 
@@ -44,48 +50,50 @@ init_db()
 
 # --- UTILITAIRES BD ---
 def get_user(username):
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM users WHERE username = %s", (username,))
-                return cur.fetchone()
-    except Exception as e:
-        print(f"⚠️ get_user({username}) échoué : {e}")
-        return None
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+            return cur.fetchone()
+
+def get_user_by_key(key):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE overlay_key = %s", (key,))
+            return cur.fetchone()
 
 def save_user(username, broadcaster_id, access_token, refresh_token):
     now = int(time.time())
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO users (username, broadcaster_id, access_token, refresh_token, last_refresh)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (username)
-                    DO UPDATE SET
-                        broadcaster_id = EXCLUDED.broadcaster_id,
-                        access_token = EXCLUDED.access_token,
-                        refresh_token = EXCLUDED.refresh_token,
-                        last_refresh = EXCLUDED.last_refresh
-                """, (username, broadcaster_id, access_token, refresh_token, now))
-            conn.commit()
-        print(f"💾 Utilisateur {username} enregistré / mis à jour dans Supabase.")
-    except Exception as e:
-        print(f"💥 Erreur save_user: {e}")
+    existing = get_user(username)
+    overlay_key = existing["overlay_key"] if existing and existing.get("overlay_key") else str(uuid.uuid4())
 
-def get_all_users():
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT username, refresh_token FROM users")
-                return cur.fetchall()
-    except Exception as e:
-        print(f"⚠️ get_all_users échoué : {e}")
-        return []
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO users (username, broadcaster_id, access_token, refresh_token, overlay_key, last_refresh)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (username)
+                DO UPDATE SET
+                    broadcaster_id = EXCLUDED.broadcaster_id,
+                    access_token = EXCLUDED.access_token,
+                    refresh_token = EXCLUDED.refresh_token,
+                    overlay_key = EXCLUDED.overlay_key,
+                    last_refresh = EXCLUDED.last_refresh
+            """, (username, broadcaster_id, access_token, refresh_token, overlay_key, now))
+        conn.commit()
+    return overlay_key
+
+def save_banned_words(username, words):
+    """Efface et remplace les mots bannis pour un utilisateur."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM banned_words WHERE username = %s", (username,))
+            for w in words:
+                cur.execute("INSERT INTO banned_words (username, word) VALUES (%s, %s)", (username, w))
+        conn.commit()
+    print(f"💾 {len(words)} mots enregistrés pour {username}")
 
 # --- TWITCH API ---
 def refresh_token(username, refresh_token_value):
-    """Rafraîchit un token Twitch pour un utilisateur donné."""
     url = "https://id.twitch.tv/oauth2/token"
     payload = {
         "grant_type": "refresh_token",
@@ -97,7 +105,6 @@ def refresh_token(username, refresh_token_value):
     if resp.status_code != 200:
         print(f"⚠️ Erreur de refresh pour {username}: {resp.text}")
         return None, None
-
     data = resp.json()
     new_access = data["access_token"]
     new_refresh = data.get("refresh_token", refresh_token_value)
@@ -107,31 +114,14 @@ def refresh_token(username, refresh_token_value):
     print(f"✅ Token rafraîchi pour {username}")
     return new_access, new_refresh
 
-def refresh_all_tokens():
-    """Rafraîchit tous les tokens Twitch de la base."""
-    print("🔁 Début du rafraîchissement global des tokens...")
-    users = get_all_users()
-    total = 0
-
-    for u in users:
-        username = u["username"]
-        refresh_token_str = u["refresh_token"]
-        try:
-            refresh_token(username, refresh_token_str)
-            total += 1
-        except Exception as e:
-            print(f"⚠️ Refresh échoué pour {username}: {e}")
-
-    print(f"✅ Rafraîchissement global terminé ({total} comptes).")
-
-def get_banned_words(user):
-    """Récupère tous les mots bannis via l'API Twitch, avec pagination."""
-    user_row = get_user(user)
+def get_banned_words(username):
+    """Récupère et stocke tous les mots bannis depuis Twitch."""
+    user_row = get_user(username)
     if not user_row:
         return "Utilisateur non trouvé.", None
 
-    _, _, _, refresh_token_str, _ = user_row.values()
-    token, _ = refresh_token(user, refresh_token_str)
+    _, _, _, refresh_token_str, _, _ = user_row.values()
+    token, _ = refresh_token(username, refresh_token_str)
     broadcaster_id = user_row["broadcaster_id"]
 
     headers = {
@@ -150,34 +140,24 @@ def get_banned_words(user):
         }
         if cursor:
             params["after"] = cursor
-
-        r = requests.get("https://api.twitch.tv/helix/moderation/blocked_terms",
-                         headers=headers, params=params)
-
-        if r.status_code == 401:
-            print(f"⚠️ Token expiré pour {user}, tentative de refresh...")
-            token, _ = refresh_token(user, refresh_token_str)
-            headers["Authorization"] = f"Bearer {token}"
-            continue
-
+        r = requests.get("https://api.twitch.tv/helix/moderation/blocked_terms", headers=headers, params=params)
         if r.status_code != 200:
             return f"Erreur Twitch: {r.status_code} {r.text}", None
-
         data = r.json()
         all_terms.extend(term["text"] for term in data.get("data", []))
         cursor = data.get("pagination", {}).get("cursor")
         if not cursor:
             break
 
-    print(f"📦 {len(all_terms)} mots interdits récupérés pour {user}")
+    save_banned_words(username, all_terms)
     return None, all_terms
 
-# --- ROUTES FLASK ---
+# --- ROUTES ---
 @app.route("/")
 def index():
     return render_template_string("""
     <h1>MotInterdit.app</h1>
-    <p>Connecte-toi pour activer ta commande Twitch !</p>
+    <p>Connecte-toi pour activer ton bot et ton overlay OBS.</p>
     <a href="/login">🔑 Se connecter avec Twitch</a>
     """)
 
@@ -199,6 +179,7 @@ def callback():
     if not code:
         return "Erreur : aucun code reçu."
 
+    # échange code contre tokens
     token_url = "https://id.twitch.tv/oauth2/token"
     data = {
         "client_id": CLIENT_ID,
@@ -209,13 +190,13 @@ def callback():
     }
     r = requests.post(token_url, data=data)
     tokens = r.json()
-
     if "access_token" not in tokens:
-        return f"Erreur lors de l'autorisation Twitch : {tokens}"
+        return f"Erreur Twitch : {tokens}"
 
     access_token = tokens["access_token"]
     refresh_token_str = tokens["refresh_token"]
 
+    # infos user
     headers = {
         "Client-ID": CLIENT_ID,
         "Authorization": f"Bearer {access_token}"
@@ -225,42 +206,68 @@ def callback():
     username = user["login"]
     broadcaster_id = user["id"]
 
-    save_user(username, broadcaster_id, access_token, refresh_token_str)
+    overlay_key = save_user(username, broadcaster_id, access_token, refresh_token_str)
 
     return render_template_string(f"""
     <h1>Bienvenue {username} 👋</h1>
-    <p>Ton compte est maintenant connecté !</p>
-    <p>Colle cette commande dans StreamElements :</p>
-    <pre>!addcom !motinterdit C’est le ${{customapi.{REDIRECT_URI.replace('/callback','')}/api/{username}/count}}ᵉ mot interdit de la chaîne.</pre>
+    <p>Ton compte est maintenant connecté.</p>
+    <p><strong>Commande StreamElements :</strong></p>
+    <pre>!addcom !motinterdit C’est le ${{{{customapi.{REDIRECT_URI.replace('/callback','')}/api/{username}/count}}}}ᵉ mot interdit de la chaîne.</pre>
+    <p><strong>URL Overlay OBS :</strong></p>
+    <pre>https://{request.host}/overlay?key={overlay_key}</pre>
+    <p>(Ajoute cette URL comme source navigateur dans OBS)</p>
     """)
 
 @app.route("/api/<username>/count")
 def api_count(username):
     user = get_user(username)
     if not user:
-        return f"Utilisateur {username} non enregistré. Va sur /login pour te connecter."
+        return f"Utilisateur {username} non enregistré."
     err, words = get_banned_words(username)
     if err:
         return err
     return str(len(words))
 
+@app.route("/overlay")
+def overlay():
+    key = request.args.get("key")
+    if not key:
+        return Response("❌ Clé manquante.", status=400)
+    user = get_user_by_key(key)
+    if not user:
+        return Response("❌ Clé invalide.", status=403)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT word FROM banned_words WHERE username = %s ORDER BY word ASC", (user["username"],))
+            rows = cur.fetchall()
+    words = [r["word"] for r in rows]
+
+    html = "<html><body style='background:transparent;color:yellow;font-family:monospace;'>"
+    html += "<div style='animation:scrollUp 60s linear infinite;height:100vh;overflow:hidden;'><pre>"
+    html += "\n".join(words)
+    html += "</pre></div><style>@keyframes scrollUp {0%{transform:translateY(100%);}100%{transform:translateY(-100%);}}</style></body></html>"
+    return Response(html, mimetype="text/html")
+
 @app.route("/refresh_all")
 def manual_refresh_all():
-    """Lance le refresh global en subprocess pour éviter tout redémarrage Render."""
-    try:
-        subprocess.Popen(
-            ["python3", "-c", "import app; app.refresh_all_tokens()"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        sys.stdout.write("🚀 Refresh global lancé en sous-processus.\n")
-    except Exception as e:
-        sys.stdout.write(f"💥 Erreur lancement subprocess: {e}\n")
-        return Response("ERROR", status=500, mimetype="text/plain")
+    from threading import Thread
+    def run_refresh():
+        print("🔁 Début du rafraîchissement global des tokens...")
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT username FROM users")
+                users = [u["username"] for u in cur.fetchall()]
+        for username in users:
+            try:
+                get_banned_words(username)
+            except Exception as e:
+                print(f"⚠️ Échec refresh {username}: {e}")
+        print("✅ Rafraîchissement global terminé.")
 
-    return Response("OK", status=200, mimetype="text/plain")
+    Thread(target=run_refresh).start()
+    return Response("OK", mimetype="text/plain")
 
-# --- MAIN ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
