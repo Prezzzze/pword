@@ -254,7 +254,7 @@ def overlay():
     joined_words_html = "<br>".join(words)
     joined_words_text = "\n".join(words)
 
-    # === STYLE STAR WARS ===
+    # === STYLE STAR WARS (optimisé OBS) ===
     if style.lower() == "starwars":
         html = f"""<!DOCTYPE html>
         <html lang="fr">
@@ -265,7 +265,8 @@ def overlay():
             html, body {{
                 height: 100%;
                 margin: 0;
-                background-color: black;
+                padding: 0;
+                background: transparent;
                 color: #ffe81f;
                 font-family: 'Pathway Gothic One', sans-serif;
                 overflow: hidden;
@@ -274,6 +275,7 @@ def overlay():
             .star-wars {{
                 position: relative;
                 height: 100vh;
+                width: 100%;
                 perspective: 400px;
                 perspective-origin: 50% 100%;
                 overflow: hidden;
@@ -281,45 +283,48 @@ def overlay():
         
             .crawl {{
                 position: absolute;
-                bottom: -100px;
+                bottom: 0;
                 width: 90%;
                 left: 5%;
                 font-size: 180%;
                 font-weight: bold;
                 text-align: justify;
                 transform-origin: 50% 100%;
-                transform: rotateX(25deg);
-                animation: crawl 120s linear infinite;
+                transform: rotateX(25deg) scale(1);
+                will-change: transform;
+                animation: crawl 90s linear infinite;
             }}
         
             @keyframes crawl {{
                 0% {{
-                    bottom: -100px;
-                    transform: rotateX(25deg) translateZ(0) translateY(0);
+                    transform: rotateX(25deg) translate3d(0, 100%, 0) scale(1);
+                    opacity: 1;
                 }}
                 100% {{
-                    bottom: 100%;
-                    transform: rotateX(25deg) translateZ(-300px) translateY(-200%);
+                    transform: rotateX(25deg) translate3d(0, -350%, 0) scale(0.6);
+                    opacity: 0.9;
                 }}
             }}
         
             pre {{
                 white-space: pre-line;
                 text-align: center;
+                margin: 0;
+                padding: 0;
             }}
         </style>
         </head>
-        <body>
+            <body>
             <section class="star-wars">
                 <div class="crawl">
                     <pre>{joined_words_html}</pre>
                 </div>
             </section>
-        </body>
+            </body>
         </html>"""
         return Response(html, mimetype="text/html")
 
-    # === STYLE PAR DÉFAUT (scroll simple) ===
+    # === STYLE PAR DÉFAUT ===
     html = f"""<html>
         <body style='background:transparent;color:yellow;font-family:monospace;'>
           <div style='animation:scrollUp 60s linear infinite;height:100vh;overflow:hidden;'>
@@ -334,6 +339,7 @@ def overlay():
         </body>
     </html>"""
     return Response(html, mimetype="text/html")
+
 
 @app.route("/refresh_all")
 def manual_refresh_all():
