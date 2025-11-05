@@ -241,7 +241,7 @@ def overlay():
     if not user:
         return Response("❌ Clé invalide.", status=403)
 
-    # Récupération des mots depuis Supabase
+    # Récupération des mots depuis la base
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -249,84 +249,77 @@ def overlay():
                 (user["username"],),
             )
             rows = cur.fetchall()
-
     words = [r["word"] for r in rows]
 
-    # On prépare le texte en dehors du f-string pour éviter tout problème de backslash
     joined_words_html = "<br>".join(words)
     joined_words_text = "\n".join(words)
 
-    # === STYLE STAR WARS ===
+    # === VERSION STAR WARS (basée sur le CodePen) ===
     if style.lower() == "starwars":
         html = f"""<!DOCTYPE html>
         <html lang="fr">
-        <head>
+            <head>
             <meta charset="utf-8" />
             <title>Star Wars Crawl</title>
             <style>
-                html, body {{
+                body {{
                     margin: 0;
-                    height: 100%;
+                    height: 100vh;
                     overflow: hidden;
-                    background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
+                    background: black;
                     color: #ffe81f;
                     font-family: 'Pathway Gothic One', sans-serif;
-                    font-size: 200%;
-                    letter-spacing: .15em;
-                    perspective: 400px;
+                    perspective: 600px;
+                    perspective-origin: 50% 100%;
                 }}
-                .fade {{
+                .star-wars {{
                     position: relative;
-                    width: 100%;
-                    min-height: 60vh;
-                    top: -100px;
-                    background-image: linear-gradient(0deg, transparent, black 75%);
-                    z-index: 1;
-                }}
-                .starwars {{
-                    position: relative;
-                    height: 800px;
-                    color: #ffe81f;
-                    font-size: 200%;
-                    font-weight: bold;
-                    text-align: justify;
+                    height: 100vh;
                     overflow: hidden;
-                    transform-origin: 50% 100%;
                 }}
                 .crawl {{
                     position: absolute;
-                    top: 9999px;
+                    top: 100vh;
+                    width: 90%;
+                    left: 5%;
+                    font-size: 200%;
+                    text-align: justify;
+                    line-height: 1.5em;
                     transform-origin: 50% 100%;
-                    animation: crawl 120s linear infinite;
+                    animation: crawl 100s linear infinite;
+                }}
+                .crawl > div {{
+                    transform: rotateX(25deg);
+                    transform-origin: 50% 100%;
                 }}
                 @keyframes crawl {{
                     0% {{
                         top: 100vh;
-                        transform: rotateX(25deg)  translateZ(0);
+                        transform: rotateX(25deg) translateZ(0);
                     }}
                     100% {{
-                        top: -6000px;
-                        transform: rotateX(25deg) translateZ(-2000px);
+                        top: -3000px;
+                        transform: rotateX(25deg) translateZ(-1500px);
                     }}
                 }}
                 pre {{
                     white-space: pre-line;
-                    text-align: center;
                 }}
             </style>
-        </head>
-        <body>
-            <div class="fade"></div>
-            <section class="starwars">
-                <div class="crawl">
-                    <pre>{joined_words_html}</pre>
+            </head>
+            <body>
+            <section class="star-wars">
+              <div class="crawl">
+                <div>
+                  <pre>{joined_words_html}</pre>
                 </div>
+              </div>
             </section>
-        </body>
-    </html>"""
-    return Response(html, mimetype="text/html")
+            </body>
+        </html>"""
+        return Response(html, mimetype="text/html")
 
-    # === STYLE PAR DÉFAUT (scroll vertical simple) ===
+    # === VERSION PAR DÉFAUT (scroll vertical simple) ===
     html = f"""<html>
 <body style='background:transparent;color:yellow;font-family:monospace;'>
   <div style='animation:scrollUp 60s linear infinite;height:100vh;overflow:hidden;'>
@@ -341,6 +334,7 @@ def overlay():
 </body>
 </html>"""
     return Response(html, mimetype="text/html")
+
 
 @app.route("/refresh_all")
 def manual_refresh_all():
