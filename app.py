@@ -212,7 +212,7 @@ def callback():
     <h1>Bienvenue {username} 👋</h1>
     <p>Ton compte est maintenant connecté.</p>
     <p><strong>Commande StreamElements :</strong></p>
-    <pre>!addcom !motinterdit C’est le ${{{{customapi.{REDIRECT_URI.replace('/callback','')}/api/{username}/count}}}}ᵉ mot interdit de la chaîne.</pre>
+    <pre>!addcom !motinterdit C’est le ${{ '{{' }}customapi.{REDIRECT_URI.replace('/callback','')}/api/{username}/count{{ '}}' }}ᵉ mot interdit de la chaîne.</pre>
     <p><strong>URL Overlay OBS :</strong></p>
     <pre>https://{request.host}/overlay?key={overlay_key}</pre>
     <p>(Ajoute cette URL comme source navigateur dans OBS)</p>
