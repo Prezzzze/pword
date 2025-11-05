@@ -231,27 +231,6 @@ def api_count(username):
 @app.route("/overlay")
 def overlay():
     key = request.args.get("key")
-    if not key:
-        return Response("❌ Clé manquante.", status=400)
-    user = get_user_by_key(key)
-    if not user:
-        return Response("❌ Clé invalide.", status=403)
-
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT word FROM banned_words WHERE username = %s ORDER BY word ASC", (user["username"],))
-            rows = cur.fetchall()
-    words = [r["word"] for r in rows]
-
-    html = "<html><body style='background:transparent;color:yellow;font-family:monospace;'>"
-    html += "<div style='animation:scrollUp 60s linear infinite;height:100vh;overflow:hidden;'><pre>"
-    html += "\n".join(words)
-    html += "</pre></div><style>@keyframes scrollUp {0%{transform:translateY(100%);}100%{transform:translateY(-100%);}}</style></body></html>"
-    return Response(html, mimetype="text/html")
-
-@app.route("/overlay")
-def overlay():
-    key = request.args.get("key")
     style = request.args.get("style", "default")
 
     if not key:
@@ -265,10 +244,10 @@ def overlay():
             cur.execute("SELECT word FROM banned_words WHERE username = %s ORDER BY word ASC", (user["username"],))
             rows = cur.fetchall()
     words = [r["word"] for r in rows]
+    joined_words = "\n".join(words)
 
     # --- STYLE STAR WARS ---
     if style.lower() == "starwars":
-        joined_words = "\n".join(words)
         html = f"""
         <html>
         <head>
@@ -310,7 +289,6 @@ def overlay():
         return Response(html, mimetype="text/html")
 
     # --- STYLE PAR DÉFAUT ---
-    joined_words = "\n".join(words)
     html = f"""
     <html>
     <body style='background:transparent;color:yellow;font-family:monospace;'>
@@ -327,7 +305,6 @@ def overlay():
     </html>
     """
     return Response(html, mimetype="text/html")
-
 
 
 @app.route("/refresh_all")
