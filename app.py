@@ -245,62 +245,78 @@ def overlay():
         with conn.cursor() as cur:
             cur.execute("SELECT word FROM banned_words WHERE username = %s ORDER BY word ASC", (user["username"],))
             rows = cur.fetchall()
+
     words = [r["word"] for r in rows]
     joined_words = "\n".join(words)
 
     # --- STYLE STAR WARS ---
     if style.lower() == "starwars":
-    joined_words = "\n".join(words)
+        html = f"""
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <title>StarWars Crawl</title>
+          <style>
+            body {{
+                margin: 0;
+                height: 100vh;
+                overflow: hidden;
+                background: black;
+                color: #ffe81f;
+                font-family: 'Arial Black', sans-serif;
+                perspective: 600px;
+                perspective-origin: 50% 100%;
+            }}
+            .crawl {{
+                position: absolute;
+                bottom: 0;
+                width: 90%;
+                left: 5%;
+                text-align: justify;
+                font-size: 1.5em;
+                line-height: 1.5em;
+                transform-origin: 50% 100%;
+                animation: crawl 120s linear infinite;
+            }}
+            pre {{
+                white-space: pre-wrap;
+            }}
+            @keyframes crawl {{
+                0% {{
+                    transform: rotateX(25deg) translateZ(0) translateY(100vh);
+                }}
+                100% {{
+                    transform: rotateX(25deg) translateZ(-800px) translateY(-350%);
+                }}
+            }}
+          </style>
+        </head>
+        <body>
+          <div class="crawl">
+            <pre>{joined_words}</pre>
+          </div>
+        </body>
+        </html>
+        """
+        return Response(html, mimetype="text/html")
+
+    # --- STYLE PAR DÉFAUT ---
     html = f"""
     <html>
-    <head>
-      <meta charset="utf-8">
-      <title>StarWars Crawl</title>
-      <style>
-        body {{
-            margin: 0;
-            height: 100vh;
-            overflow: hidden;
-            background: black;
-            color: #ffe81f;
-            font-family: 'Arial Black', sans-serif;
-            perspective: 600px;
-            perspective-origin: 50% 100%;
-        }}
-        .crawl {{
-            position: absolute;
-            bottom: 0;
-            width: 90%;
-            left: 5%;
-            text-align: justify;
-            font-size: 1.5em;
-            line-height: 1.5em;
-            transform-origin: 50% 100%;
-            animation: crawl 120s linear infinite;
-        }}
-        pre {{
-            white-space: pre-wrap;
-        }}
-        @keyframes crawl {{
-            0% {{
-                transform: rotateX(25deg) translateZ(0) translateY(100vh);
-            }}
-            100% {{
-                transform: rotateX(25deg) translateZ(-800px) translateY(-350%);
-            }}
-        }}
-      </style>
-    </head>
-    <body>
-      <div class="crawl">
+    <body style='background:transparent;color:yellow;font-family:monospace;'>
+      <div style='animation:scrollUp 60s linear infinite;height:100vh;overflow:hidden;'>
         <pre>{joined_words}</pre>
       </div>
+      <style>
+        @keyframes scrollUp {{
+          0% {{transform:translateY(100%);}}
+          100% {{transform:translateY(-100%);}}
+        }}
+      </style>
     </body>
     </html>
     """
     return Response(html, mimetype="text/html")
-
-
 
 @app.route("/refresh_all")
 def manual_refresh_all():
