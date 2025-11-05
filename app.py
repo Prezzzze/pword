@@ -249,6 +249,73 @@ def overlay():
     html += "</pre></div><style>@keyframes scrollUp {0%{transform:translateY(100%);}100%{transform:translateY(-100%);}}</style></body></html>"
     return Response(html, mimetype="text/html")
 
+@app.route("/overlay")
+def overlay():
+    key = request.args.get("key")
+    style = request.args.get("style", "default")
+
+    if not key:
+        return Response("❌ Clé manquante.", status=400)
+    user = get_user_by_key(key)
+    if not user:
+        return Response("❌ Clé invalide.", status=403)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT word FROM banned_words WHERE username = %s ORDER BY word ASC", (user["username"],))
+            rows = cur.fetchall()
+    words = [r["word"] for r in rows]
+
+    # --- STYLE STAR WARS ---
+    if style.lower() == "starwars":
+        html = f"""
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <title>StarWars Crawl</title>
+        <style>
+        body {{
+            margin: 0;
+            overflow: hidden;
+            height: 100vh;
+            background: black;
+            color: #ffe81f;
+            font-family: 'Lucida Sans', sans-serif;
+            perspective: 400px;
+        }}
+        .crawl {{
+            position: absolute;
+            bottom: -100px;
+            width: 80%;
+            left: 10%;
+            font-size: 1.5em;
+            text-align: justify;
+            transform-origin: 50% 100%;
+            animation: crawl 120s linear infinite;
+        }}
+        @keyframes crawl {{
+            0%   {{ transform: rotateX(20deg) translateZ(0) translateY(100vh); }}
+            100% {{ transform: rotateX(25deg) translateZ(-600px) translateY(-350%); }}
+        }}
+        </style>
+        </head>
+        <body>
+            <div class="crawl">
+                <pre>{"\n".join(words)}</pre>
+            </div>
+        </body>
+        </html>
+        """
+        return Response(html, mimetype="text/html")
+
+    # --- STYLE PAR DÉFAUT ---
+    html = "<html><body style='background:transparent;color:yellow;font-family:monospace;'>"
+    html += "<div style='animation:scrollUp 60s linear infinite;height:100vh;overflow:hidden;'><pre>"
+    html += "\n".join(words)
+    html += "</pre></div><style>@keyframes scrollUp {0%{transform:translateY(100%);}100%{transform:translateY(-100%);}}</style></body></html>"
+    return Response(html, mimetype="text/html")
+
+
 @app.route("/refresh_all")
 def manual_refresh_all():
     from threading import Thread
