@@ -241,6 +241,7 @@ def overlay():
     if not user:
         return Response("❌ Clé invalide.", status=403)
 
+    # Récupération des mots depuis Supabase
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -250,12 +251,14 @@ def overlay():
             rows = cur.fetchall()
 
     words = [r["word"] for r in rows]
-    joined_words = "<br>".join(words)
 
-    # === STAR WARS STYLE ===
+    # On prépare le texte en dehors du f-string pour éviter tout problème de backslash
+    joined_words_html = "<br>".join(words)
+    joined_words_text = "\n".join(words)
+
+    # === STYLE STAR WARS ===
     if style.lower() == "starwars":
-        html = f"""
-        <!DOCTYPE html>
+        html = f"""<!DOCTYPE html>
         <html lang="fr">
         <head>
             <meta charset="utf-8" />
@@ -296,11 +299,6 @@ def overlay():
                     transform-origin: 50% 100%;
                     animation: crawl 120s linear infinite;
                 }}
-                .crawl > div {{
-                    position: relative;
-                    top: 9999px;
-                    transform-origin: 50% 100%;
-                }}
                 @keyframes crawl {{
                     0% {{
                         top: 100vh;
@@ -321,32 +319,28 @@ def overlay():
             <div class="fade"></div>
             <section class="starwars">
                 <div class="crawl">
-                    <pre>{joined_words}</pre>
+                    <pre>{joined_words_html}</pre>
                 </div>
             </section>
         </body>
-        </html>
-        """
-        return Response(html, mimetype="text/html")
-
-    # === STYLE PAR DÉFAUT (scroll vertical simple) ===
-    html = f"""
-    <html>
-    <body style='background:transparent;color:yellow;font-family:monospace;'>
-      <div style='animation:scrollUp 60s linear infinite;height:100vh;overflow:hidden;'>
-        <pre>{"\\n".join(words)}</pre>
-      </div>
-      <style>
-        @keyframes scrollUp {{
-          0% {{transform:translateY(100%);}}
-          100% {{transform:translateY(-100%);}}
-        }}
-      </style>
-    </body>
-    </html>
-    """
+    </html>"""
     return Response(html, mimetype="text/html")
 
+    # === STYLE PAR DÉFAUT (scroll vertical simple) ===
+    html = f"""<html>
+<body style='background:transparent;color:yellow;font-family:monospace;'>
+  <div style='animation:scrollUp 60s linear infinite;height:100vh;overflow:hidden;'>
+    <pre>{joined_words_text}</pre>
+  </div>
+  <style>
+    @keyframes scrollUp {{
+      0% {{transform:translateY(100%);}}
+      100% {{transform:translateY(-100%);}}
+    }}
+  </style>
+</body>
+</html>"""
+    return Response(html, mimetype="text/html")
 
 @app.route("/refresh_all")
 def manual_refresh_all():
