@@ -268,6 +268,7 @@ def overlay():
 
     # --- STYLE STAR WARS ---
     if style.lower() == "starwars":
+        joined_words = "\n".join(words)
         html = f"""
         <html>
         <head>
@@ -301,7 +302,7 @@ def overlay():
         </head>
         <body>
             <div class="crawl">
-                <pre>{"\n".join(words)}</pre>
+                <pre>{joined_words}</pre>
             </div>
         </body>
         </html>
@@ -309,11 +310,24 @@ def overlay():
         return Response(html, mimetype="text/html")
 
     # --- STYLE PAR DÉFAUT ---
-    html = "<html><body style='background:transparent;color:yellow;font-family:monospace;'>"
-    html += "<div style='animation:scrollUp 60s linear infinite;height:100vh;overflow:hidden;'><pre>"
-    html += "\n".join(words)
-    html += "</pre></div><style>@keyframes scrollUp {0%{transform:translateY(100%);}100%{transform:translateY(-100%);}}</style></body></html>"
+    joined_words = "\n".join(words)
+    html = f"""
+    <html>
+    <body style='background:transparent;color:yellow;font-family:monospace;'>
+      <div style='animation:scrollUp 60s linear infinite;height:100vh;overflow:hidden;'>
+        <pre>{joined_words}</pre>
+      </div>
+      <style>
+        @keyframes scrollUp {{
+          0% {{transform:translateY(100%);}}
+          100% {{transform:translateY(-100%);}}
+        }}
+      </style>
+    </body>
+    </html>
+    """
     return Response(html, mimetype="text/html")
+
 
 
 @app.route("/refresh_all")
