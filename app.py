@@ -217,6 +217,7 @@ def callback():
     <pre>https://{request.host}/overlay?key={overlay_key}</pre>
     <p><strong>URL Overlay OBS "Star Wars crawler" :</strong></p>
     <pre>https://{request.host}/overlay?key={overlay_key}&style=starwars</pre>
+    <pre>En ajoutant &speed=XXX à la fin, tu gères la vitesse de l'animation (plus c'est bas, plus c'est rapide)</pre>
     <p>(Ajoute l'une de ces URLs comme source navigateur dans OBS)</p>
     """)
 
@@ -234,6 +235,7 @@ def api_count(username):
 def overlay():
     key = request.args.get("key")
     style = request.args.get("style", "default")
+    speed = int(request.args.get("speed", 60))  # durée de l’animation en secondes
 
     if not key:
         return Response("❌ Clé manquante.", status=400)
@@ -241,7 +243,7 @@ def overlay():
     if not user:
         return Response("❌ Clé invalide.", status=403)
 
-    # Récupère les mots depuis la base
+    # Récupération des mots depuis la base
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -254,90 +256,90 @@ def overlay():
     joined_words_html = "<br>".join(words)
     joined_words_text = "\n".join(words)
 
-    # === STYLE STAR WARS (optimisé OBS) ===
+    # === STYLE STAR WARS optimisé ===
     if style.lower() == "starwars":
         html = f"""<!DOCTYPE html>
-        <html lang="fr">
-        <head>
-        <meta charset="utf-8" />
-        <title>Star Wars Crawl</title>
-        <style>
-            html, body {{
-                height: 100%;
-                margin: 0;
-                padding: 0;
-                background: transparent;
-                color: #ffe81f;
-                font-family: 'Pathway Gothic One', sans-serif;
-                overflow: hidden;
-            }}
-        
-            .star-wars {{
-                position: relative;
-                height: 100vh;
-                width: 100%;
-                perspective: 400px;
-                perspective-origin: 50% 100%;
-                overflow: hidden;
-            }}
-        
-            .crawl {{
-                position: absolute;
-                bottom: 0;
-                width: 90%;
-                left: 5%;
-                font-size: 180%;
-                font-weight: bold;
-                text-align: justify;
-                transform-origin: 50% 100%;
-                transform: rotateX(25deg) scale(1);
-                will-change: transform;
-                animation: crawl 90s linear infinite;
-            }}
-        
-            @keyframes crawl {{
-                0% {{
-                    transform: rotateX(25deg) translate3d(0, 100%, 0) scale(1);
-                    opacity: 1;
-                }}
-                100% {{
-                    transform: rotateX(25deg) translate3d(0, -350%, 0) scale(0.6);
-                    opacity: 0.9;
-                }}
-            }}
-        
-            pre {{
-                white-space: pre-line;
-                text-align: center;
-                margin: 0;
-                padding: 0;
-            }}
-        </style>
-        </head>
-            <body>
-            <section class="star-wars">
-                <div class="crawl">
-                    <pre>{joined_words_html}</pre>
-                </div>
-            </section>
-            </body>
-        </html>"""
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<title>Star Wars Crawl</title>
+<style>
+    html, body {{
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        color: #ffe81f;
+        font-family: 'Pathway Gothic One', sans-serif;
+        overflow: hidden;
+    }}
+
+    .star-wars {{
+        position: relative;
+        height: 100vh;
+        width: 100%;
+        perspective: 400px;
+        perspective-origin: 50% 100%;
+        overflow: hidden;
+    }}
+
+    .crawl {{
+        position: absolute;
+        bottom: 0;
+        width: 90%;
+        left: 5%;
+        font-size: 180%;
+        font-weight: bold;
+        text-align: justify;
+        transform-origin: 50% 100%;
+        transform: rotateX(25deg) scale(1);
+        will-change: transform;
+        animation: crawl {speed}s linear infinite;
+    }}
+
+    @keyframes crawl {{
+        0% {{
+            transform: rotateX(25deg) translate3d(0, 100%, 0) scale(1);
+            opacity: 1;
+        }}
+        100% {{
+            transform: rotateX(25deg) translate3d(0, -350%, 0) scale(0.6);
+            opacity: 0.9;
+        }}
+    }}
+
+    pre {{
+        white-space: pre-line;
+        text-align: center;
+        margin: 0;
+        padding: 0;
+    }}
+</style>
+</head>
+<body>
+<section class="star-wars">
+    <div class="crawl">
+        <pre>{joined_words_html}</pre>
+    </div>
+</section>
+</body>
+</html>"""
         return Response(html, mimetype="text/html")
 
     # === STYLE PAR DÉFAUT ===
     html = f"""<html>
-        <body style='background:transparent;color:yellow;font-family:monospace;'>
-          <div style='animation:scrollUp 60s linear infinite;height:100vh;overflow:hidden;'>
-            <pre>{joined_words_text}</pre>
-          </div>
-          <style>
-            @keyframes scrollUp {{
-              0% {{transform:translateY(100%);}}
-              100% {{transform:translateY(-100%);}}
-            }}
-          </style>
-        </body>
-    </html>"""
+<body style='background:transparent;color:yellow;font-family:monospace;'>
+  <div style='animation:scrollUp {speed}s linear infinite;height:100vh;overflow:hidden;'>
+    <pre>{joined_words_text}</pre>
+  </div>
+  <style>
+    @keyframes scrollUp {{
+      0% {{transform:translateY(100%);}}
+      100% {{transform:translateY(-100%);}}
+    }}
+  </style>
+</body>
+</html>"""
     return Response(html, mimetype="text/html")
 
 
